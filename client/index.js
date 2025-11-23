@@ -1,13 +1,26 @@
 // Entry point for Mystic Survival client (Pixi.js)
 
 import * as PIXI from 'pixi.js';
+import { Enemy, spawnEnemy } from './enemies.js';
+
+// --- CONFIGURATION ---
+const FRAME_WIDTH = 64; // Width of one sprite frame
+const FRAME_HEIGHT = 64; // Height of one sprite frame
+const SHEET_COLS = 4; // Columns in the sheet
+const SHEET_ROWS = 2; // Rows in the sheet
+
+// Use Parcel's URL handling to get the correct path to the asset
+const playerSheetUrl = new URL('../assets/player_sheet.png', import.meta.url);
+
 const app = new PIXI.Application({
   width: 800,
   height: 600,
   backgroundColor: 0x222222,
 });
 document.body.appendChild(app.view);
-import { Enemy, spawnEnemy } from './enemies.js';
+
+// Ensure pixel art scales crisply
+PIXI.BaseTexture.defaultOptions.scaleMode = PIXI.SCALE_MODES.NEAREST;
 
 // Initialize WebSocket connection
 const ws = new WebSocket('ws://localhost:3000');
@@ -17,7 +30,7 @@ ws.onopen = () => {
   console.log('Connected to server');
 };
 
-ws.onerror = (error) => {
+ws.onerror = error => {
   console.error('WebSocket error:', error);
 };
 
@@ -33,14 +46,68 @@ setInterval(() => {
   enemies.push(spawnEnemy(app));
 }, 2000);
 
-// Player sprite
-const player = PIXI.Sprite.from(PIXI.Texture.WHITE);
+// --- PLAYER SETUP ---
+
+// We hold the textures here once loaded
+const playerTextures = {};
+let isAssetsLoaded = false;
+
+// Create the player sprite (initially a placeholder until art loads)
+const player = new PIXI.Sprite(PIXI.Texture.WHITE);
 player.width = 40;
 player.height = 40;
-player.tint = 0x00ff00;
+player.tint = 0x00ff00; // Green placeholder tint
+player.anchor.set(0.5); // Center the anchor for rotation/flipping
 player.x = app.screen.width / 2;
 player.y = app.screen.height / 2;
 app.stage.addChild(player);
+
+// Function to load and slice the sprite sheet
+async function loadAssets() {
+  try {
+    const sheetTexture = await PIXI.Assets.load(playerSheetUrl.href);
+
+    // Define the grid mapping based on your image
+    // Row 0: South, SouthEast, East, NorthEast
+    // Row 1: South(Alt), SouthWest, West, NorthWest
+    const directionMap = [
+      ['south', 'southEast', 'east', 'northEast'],
+      ['south_alt', 'southWest', 'west', 'northWest'],
+    ];
+
+    for (let y = 0; y < SHEET_ROWS; y++) {
+      for (let x = 0; x < SHEET_COLS; x++) {
+        const rect = new PIXI.Rectangle(
+          x * FRAME_WIDTH,
+          y * FRAME_HEIGHT,
+          FRAME_WIDTH,
+          FRAME_HEIGHT
+        );
+        const frameTex = new PIXI.Texture(sheetTexture.baseTexture, rect);
+        const dirName = directionMap[y][x];
+        playerTextures[dirName] = frameTex;
+      }
+    }
+
+    // Apply the default texture and reset dimensions
+    player.texture = playerTextures['south'];
+    player.tint = 0xffffff; // Remove green tint
+    player.scale.set(1); // Reset scale (adjust if sprite is too small/big)
+
+    // Optional: Scale up if the 64x64 sprite looks too small
+    // player.scale.set(1.5);
+
+    isAssetsLoaded = true;
+    console.log('Player sprites loaded!');
+  } catch (error) {
+    console.error('Failed to load player sheet:', error);
+  }
+}
+
+// Start loading assets immediately
+loadAssets();
+
+// --- INPUT & MOVEMENT ---
 
 // Basic keyboard movement
 const keys = {};
@@ -52,11 +119,12 @@ window.addEventListener('keyup', e => {
 });
 
 // Player facing direction (persists after key release)
-let facingDirection = { dx: 0, dy: -1 }; // Default: facing up
+let facingDirection = { dx: 0, dy: 1 }; // Default: facing down (South)
 
 app.ticker.add(() => {
   // Calculate movement direction
-  let dx = 0, dy = 0;
+  let dx = 0,
+    dy = 0;
   if (keys['ArrowUp'] || keys['KeyW']) dy -= 1;
   if (keys['ArrowDown'] || keys['KeyS']) dy += 1;
   if (keys['ArrowLeft'] || keys['KeyA']) dx -= 1;
@@ -64,24 +132,59 @@ app.ticker.add(() => {
 
   // Update facing direction when movement keys are pressed
   if (dx !== 0 || dy !== 0) {
-    // Normalize direction for 8-way movement
+    // Normalize direction for 8-way movement logic
     const mag = Math.sqrt(dx * dx + dy * dy);
     facingDirection.dx = dx / mag;
     facingDirection.dy = dy / mag;
+
+    // --- SPRITE DIRECTION UPDATE ---
+    if (isAssetsLoaded) {
+      updatePlayerSprite(dx, dy);
+    }
   }
 
   // Apply movement
-  if (keys['ArrowUp'] || keys['KeyW']) player.y -= 5;
-  if (keys['ArrowDown'] || keys['KeyS']) player.y += 5;
-  if (keys['ArrowLeft'] || keys['KeyA']) player.x -= 5;
-  if (keys['ArrowRight'] || keys['KeyD']) player.x += 5;
+  const speed = 5;
+  if (keys['ArrowUp'] || keys['KeyW']) player.y -= speed;
+  if (keys['ArrowDown'] || keys['KeyS']) player.y += speed;
+  if (keys['ArrowLeft'] || keys['KeyA']) player.x -= speed;
+  if (keys['ArrowRight'] || keys['KeyD']) player.x += speed;
 
   // Bound player to screen
-  player.x = Math.max(0, Math.min(player.x, app.screen.width - player.width));
-  player.y = Math.max(0, Math.min(player.y, app.screen.height - player.height));
+  // (Adjusted for anchor being in the center 0.5)
+  player.x = Math.max(player.width / 2, Math.min(player.x, app.screen.width - player.width / 2));
+  player.y = Math.max(player.height / 2, Math.min(player.y, app.screen.height - player.height / 2));
 });
 
-// Shooting logic
+function updatePlayerSprite(dx, dy) {
+  // Simple logic to map -1, 0, 1 directions to string keys
+  // Note: Your sheet lacks a straight "North", so we use NorthEast/NorthWest or hold previous.
+  // We will map based on the 8 compass points.
+
+  let dirKey = 'south';
+
+  if (dy > 0) {
+    // Moving Down
+    if (dx > 0) dirKey = 'southEast';
+    else if (dx < 0) dirKey = 'southWest';
+    else dirKey = 'south';
+  } else if (dy < 0) {
+    // Moving Up
+    if (dx > 0) dirKey = 'northEast';
+    else if (dx < 0) dirKey = 'northWest';
+    else dirKey = 'northEast'; // Fallback for straight North (missing sprite)
+  } else if (dx !== 0) {
+    // Horizontal only
+    if (dx > 0) dirKey = 'east';
+    else if (dx < 0) dirKey = 'west';
+  }
+
+  if (playerTextures[dirKey]) {
+    player.texture = playerTextures[dirKey];
+  }
+}
+
+// --- SHOOTING LOGIC ---
 let bullets = [];
 // Weapon unlocks and upgrades
 const weapons = [
@@ -107,8 +210,11 @@ function shootBullet() {
   bullet.width = 8;
   bullet.height = 8;
   bullet.tint = 0xffff00;
-  bullet.x = player.x + player.width / 2 - 4;
-  bullet.y = player.y + player.height / 2 - 4;
+
+  // Start bullet at player center
+  bullet.x = player.x;
+  bullet.y = player.y;
+
   // Direction: use player's facing direction
   bullet.vx = facingDirection.dx * 10;
   bullet.vy = facingDirection.dy * 10;
@@ -242,8 +348,6 @@ app.ticker.add(() => {
   checkPlayerPickupCollisions();
 });
 
-// (Optional) If you want advanced enemy types, you can extend the Enemy class or add logic to spawnEnemy/apply types.
-
 // Multiplayer support: connect to server and sync player position
 // Server-synced enemies
 let serverEnemies = [];
@@ -289,7 +393,7 @@ function updateOtherPlayers(players) {
   otherPlayers = {};
   players.forEach(p => {
     if (p.id !== localPlayerId) {
-      const sprite = PIXI.Sprite.from(PIXI.Texture.WHITE);
+      constPk = PIXI.Sprite.from(PIXI.Texture.WHITE);
       sprite.width = 40;
       sprite.height = 40;
       sprite.tint = 0x0000ff;
