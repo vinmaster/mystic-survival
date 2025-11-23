@@ -76,7 +76,21 @@ function spawnEnemy() {
   }
   enemies.push({ x, y, health: 3, id: Date.now() + Math.random() });
 }
-setInterval(spawnEnemy, 2000);
+
+function anyPlayerAlive() {
+  // A player is alive if they exist and are not marked as dead
+  for (const player of players.values()) {
+    if (!player.dead) return true;
+  }
+  return false;
+}
+
+setInterval(() => {
+  // Only spawn enemies if there are players and any are alive
+  if (players.size > 0 && anyPlayerAlive()) {
+    spawnEnemy();
+  }
+}, 2000);
 
 function moveEnemies() {
   enemies.forEach(enemy => {

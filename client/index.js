@@ -51,7 +51,26 @@ window.addEventListener('keyup', e => {
   keys[e.code] = false;
 });
 
+// Player facing direction (persists after key release)
+let facingDirection = { dx: 0, dy: -1 }; // Default: facing up
+
 app.ticker.add(() => {
+  // Calculate movement direction
+  let dx = 0, dy = 0;
+  if (keys['ArrowUp'] || keys['KeyW']) dy -= 1;
+  if (keys['ArrowDown'] || keys['KeyS']) dy += 1;
+  if (keys['ArrowLeft'] || keys['KeyA']) dx -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) dx += 1;
+
+  // Update facing direction when movement keys are pressed
+  if (dx !== 0 || dy !== 0) {
+    // Normalize direction for 8-way movement
+    const mag = Math.sqrt(dx * dx + dy * dy);
+    facingDirection.dx = dx / mag;
+    facingDirection.dy = dy / mag;
+  }
+
+  // Apply movement
   if (keys['ArrowUp'] || keys['KeyW']) player.y -= 5;
   if (keys['ArrowDown'] || keys['KeyS']) player.y += 5;
   if (keys['ArrowLeft'] || keys['KeyA']) player.x -= 5;
@@ -90,23 +109,9 @@ function shootBullet() {
   bullet.tint = 0xffff00;
   bullet.x = player.x + player.width / 2 - 4;
   bullet.y = player.y + player.height / 2 - 4;
-  // Direction: use last pressed arrow/WASD
-  let dx = 0,
-    dy = 0;
-  if (keys['ArrowUp'] || keys['KeyW']) dy = -1;
-  if (keys['ArrowDown'] || keys['KeyS']) dy = 1;
-  if (keys['ArrowLeft'] || keys['KeyA']) dx = -1;
-  if (keys['ArrowRight'] || keys['KeyD']) dx = 1;
-  // Normalize direction
-  if (dx !== 0 || dy !== 0) {
-    const mag = Math.sqrt(dx * dx + dy * dy);
-    dx /= mag;
-    dy /= mag;
-  } else {
-    dy = -1; // Default up
-  }
-  bullet.vx = dx * 10;
-  bullet.vy = dy * 10;
+  // Direction: use player's facing direction
+  bullet.vx = facingDirection.dx * 10;
+  bullet.vy = facingDirection.dy * 10;
   bullet.damage = currentWeapon.damage;
   app.stage.addChild(bullet);
   bullets.push(bullet);
