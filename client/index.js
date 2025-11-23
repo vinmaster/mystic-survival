@@ -56,6 +56,10 @@ app.ticker.add(() => {
   if (keys['ArrowDown'] || keys['KeyS']) player.y += 5;
   if (keys['ArrowLeft'] || keys['KeyA']) player.x -= 5;
   if (keys['ArrowRight'] || keys['KeyD']) player.x += 5;
+
+  // Bound player to screen
+  player.x = Math.max(0, Math.min(player.x, app.screen.width - player.width));
+  player.y = Math.max(0, Math.min(player.y, app.screen.height - player.height));
 });
 
 // Shooting logic
