@@ -1,6 +1,10 @@
 // Simple enemy spawning and rendering for MVP
 import * as PIXI from 'pixi.js';
 
+// Enemy speed constant (pixels per frame at 60fps)
+// This ensures all enemies move at the same speed
+export const ENEMY_SPEED = 2;
+
 // Enemy logic
 
 export class Enemy {
@@ -18,8 +22,8 @@ export class Enemy {
     const dy = player.y - this.sprite.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > 0) {
-      this.sprite.x += (dx / dist) * 2;
-      this.sprite.y += (dy / dist) * 2;
+      this.sprite.x += (dx / dist) * ENEMY_SPEED;
+      this.sprite.y += (dy / dist) * ENEMY_SPEED;
     }
   }
 }

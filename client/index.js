@@ -1,7 +1,6 @@
 // Entry point for Mystic Survival client (Pixi.js)
 
 import * as PIXI from 'pixi.js';
-import { Enemy, spawnEnemy } from './enemies.js';
 
 // --- CONFIGURATION ---
 const FRAME_WIDTH = 64; // Width of one sprite frame
@@ -38,13 +37,7 @@ ws.onclose = () => {
   console.log('Disconnected from server');
 };
 
-// Local enemies array
-const enemies = [];
-
-// Spawn enemies periodically
-setInterval(() => {
-  enemies.push(spawnEnemy(app));
-}, 2000);
+// Enemies are now controlled by the server only
 
 // --- PLAYER SETUP ---
 
@@ -260,51 +253,54 @@ function updateHUD() {
   hud.text = `Health: ${playerHealth}  Score: ${playerScore}  Weapon: ${currentWeapon.name}`;
 }
 
-// Update score and health on enemy kill
+// Update score and health on enemy kill (using server enemies)
 function checkBulletEnemyCollisions() {
   bullets.forEach((bullet, bi) => {
-    enemies.forEach((enemy, ei) => {
-      const dx = bullet.x - enemy.sprite.x;
-      const dy = bullet.y - enemy.sprite.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 20) {
-        enemy.sprite.health = (enemy.sprite.health || 3) - bullet.damage;
-        if (enemy.sprite.health <= 0) {
-          app.stage.removeChild(enemy.sprite);
-          enemies.splice(ei, 1);
-          playerScore += 10;
-          updateHUD();
+    if (window.enemySprites) {
+      window.enemySprites.forEach((enemySprite, ei) => {
+        const dx = bullet.x - enemySprite.x;
+        const dy = bullet.y - enemySprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 20) {
+          // Send damage to server - server will handle health and removal
+          if (ws && ws.readyState === WebSocket.OPEN && serverEnemies[ei]) {
+            ws.send(JSON.stringify({ 
+              type: 'bulletHit', 
+              enemyId: serverEnemies[ei].id, 
+              damage: bullet.damage 
+            }));
+          }
+          app.stage.removeChild(bullet);
+          bullets.splice(bi, 1);
         }
-        app.stage.removeChild(bullet);
-        bullets.splice(bi, 1);
-      }
-    });
+      });
+    }
   });
 }
 
 app.ticker.add(() => {
   checkBulletEnemyCollisions();
   updateHUD();
-  // Move enemies toward player
-  enemies.forEach(enemy => enemy.moveToward(player));
 });
 
-// Enemy damages player on contact
+// Enemy damages player on contact (using server enemies)
 function checkEnemyPlayerCollisions() {
-  enemies.forEach((enemy, ei) => {
-    const dx = player.x - enemy.sprite.x;
-    const dy = player.y - enemy.sprite.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 30) {
-      playerHealth -= 1;
-      if (playerHealth <= 0) {
-        playerHealth = 0;
-        hud.text = 'Game Over!';
-        app.ticker.stop();
+  if (window.enemySprites) {
+    window.enemySprites.forEach(enemySprite => {
+      const dx = player.x - enemySprite.x;
+      const dy = player.y - enemySprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 30) {
+        playerHealth -= 1;
+        if (playerHealth <= 0) {
+          playerHealth = 0;
+          hud.text = 'Game Over!';
+          app.ticker.stop();
+        }
+        updateHUD();
       }
-      updateHUD();
-    }
-  });
+    });
+  }
 }
 
 app.ticker.add(() => {
@@ -349,25 +345,43 @@ app.ticker.add(() => {
 });
 
 // Multiplayer support: connect to server and sync player position
-// Server-synced enemies
+// Server-controlled enemies (server is the single source of truth)
 let serverEnemies = [];
+let enemySpriteMap = new Map(); // Map enemy.id -> sprite for efficient updates
+
 function updateServerEnemies(enemies) {
-  // Remove old enemy sprites
-  if (window.enemySprites) {
-    window.enemySprites.forEach(sprite => app.stage.removeChild(sprite));
-  }
-  window.enemySprites = [];
   serverEnemies = enemies;
+  
+  // Create or update enemy sprites
+  const currentEnemyIds = new Set(enemies.map(e => e.id));
+  
+  // Remove sprites for enemies that no longer exist
+  enemySpriteMap.forEach((sprite, enemyId) => {
+    if (!currentEnemyIds.has(enemyId)) {
+      app.stage.removeChild(sprite);
+      enemySpriteMap.delete(enemyId);
+    }
+  });
+  
+  // Create or update sprites for existing enemies
   enemies.forEach(enemy => {
-    const sprite = PIXI.Sprite.from(PIXI.Texture.WHITE);
-    sprite.width = 30;
-    sprite.height = 30;
-    sprite.tint = 0xff0000;
+    let sprite = enemySpriteMap.get(enemy.id);
+    if (!sprite) {
+      // Create new sprite
+      sprite = PIXI.Sprite.from(PIXI.Texture.WHITE);
+      sprite.width = 30;
+      sprite.height = 30;
+      sprite.tint = 0xff0000;
+      app.stage.addChild(sprite);
+      enemySpriteMap.set(enemy.id, sprite);
+    }
+    // Update position from server
     sprite.x = enemy.x;
     sprite.y = enemy.y;
-    window.enemySprites.push(sprite);
-    app.stage.addChild(sprite);
   });
+  
+  // Update window.enemySprites array for collision checks
+  window.enemySprites = Array.from(enemySpriteMap.values());
 }
 
 // Listen for server enemy updates
@@ -381,6 +395,11 @@ ws.onmessage = event => {
   }
   if (data.type === 'players') {
     updateOtherPlayers(data.players);
+  }
+  if (data.type === 'enemyKilled') {
+    // Server confirmed enemy kill, update score
+    playerScore += data.score || 10;
+    updateHUD();
   }
 };
 

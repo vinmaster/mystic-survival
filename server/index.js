@@ -24,19 +24,18 @@ wss.on('connection', ws => {
           player.y = data.y;
         }
       }
-      if (data.type === 'bullet') {
-        // Bullet fired: check collision with enemies
-        enemies.forEach((enemy, ei) => {
-          const dx = data.x - enemy.x;
-          const dy = data.y - enemy.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 20) {
-            enemy.health -= data.damage || 1;
-            if (enemy.health <= 0) {
-              enemies.splice(ei, 1);
-            }
+      if (data.type === 'bulletHit') {
+        // Client detected collision, server processes damage
+        const enemyIndex = enemies.findIndex(e => e.id === data.enemyId);
+        if (enemyIndex !== -1) {
+          const enemy = enemies[enemyIndex];
+          enemy.health -= data.damage || 1;
+          if (enemy.health <= 0) {
+            enemies.splice(enemyIndex, 1);
+            // Notify the player who killed the enemy
+            ws.send(JSON.stringify({ type: 'enemyKilled', score: 10 }));
           }
-        });
+        }
       }
     } catch (e) {}
   });
@@ -92,6 +91,11 @@ setInterval(() => {
   }
 }, 2000);
 
+// Enemy speed constant (matches client)
+// Client moves at 2 pixels/frame at ~60fps = 120 pixels/second
+// Server moves every 100ms, so: 120 pixels/second * 0.1 seconds = 12 pixels per update
+const ENEMY_SPEED = 2; // pixels per 100ms update (equivalent to 2 pixels/frame at 60fps)
+
 function moveEnemies() {
   enemies.forEach(enemy => {
     // Move toward closest player
@@ -111,8 +115,8 @@ function moveEnemies() {
       const dy = closest.y - enemy.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > 0) {
-        enemy.x += (dx / dist) * 2;
-        enemy.y += (dy / dist) * 2;
+        enemy.x += (dx / dist) * ENEMY_SPEED;
+        enemy.y += (dy / dist) * ENEMY_SPEED;
       }
     }
   });
